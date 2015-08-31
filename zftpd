@@ -1,0 +1,31 @@
+#! /bin/sh
+# chkconfig: 2345 85 15 
+### BEGIN INIT INFO
+# chkconfig: 345 80 20
+# description: Tomcat is the Apache Servlet Engine
+# processname: tomcat
+# pidfile: /home/zhry077/ZPCDBSER/ZPC_DB_SER.pid
+### END INIT INFO
+zftpPath="/home/ftpd/"
+start(){
+    python ${zftpPath}zftpd.py start ${zftpPath}
+}
+stop(){
+    python ${zftpPath}zftpd.py stop ${zftpPath}
+}
+restart(){
+    python ${zftpPath}zftpd.py restart ${zftpPath}
+}
+case "$1" in
+  start)
+  #start
+  start
+  ;;
+  stop)
+  stop
+  ;;
+  restart)
+  restart
+  ;;
+esac
+exit 0 

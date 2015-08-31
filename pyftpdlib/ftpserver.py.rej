@@ -1,0 +1,207 @@
+--- pyftpdlib/ftpserver.py
++++ pyftpdlib/ftpserver.py
+@@ -709,8 +709,8 @@
+                 self.set_reuse_addr()
+                 try:
+                     self.bind((local_ip, port))
+-                except socket.error, why:
+-                    if why[0] == errno.EADDRINUSE:  # port already in use
++                except socket.error, err:
++                    if err[0] == errno.EADDRINUSE:  # port already in use
+                         if ports:
+                             continue
+                         # If cannot use one of the ports in the configured
+@@ -1306,9 +1306,11 @@
+             if self.read_limit:
+                 while self.ac_in_buffer_size > self.read_limit:
+                     self.ac_in_buffer_size /= 2
++                    self.ac_in_buffer_size = int(self.ac_in_buffer_size)
+             if self.write_limit:
+                 while self.ac_out_buffer_size > self.write_limit:
+                     self.ac_out_buffer_size /= 2
++                    self.ac_out_buffer_size = int(self.ac_out_buffer_size)
+ 
+     def _use_sendfile(self, producer):
+         return False
+@@ -1403,8 +1405,9 @@
+     # returning some data
+     loops = 20
+ 
+-    def __init__(self, iterator):
++    def __init__(self, iterator, encoding=None):
+         self.iterator = iterator
++        self.encoding = encoding
+ 
+     def more(self):
+         """Attempt a chunk of data from iterator by calling
+@@ -1416,7 +1419,12 @@
+                 buffer.append(self.iterator.next())
+             except StopIteration:
+                 break
+-        return ''.join(buffer)
++        if self.encoding is None:
++            return ''.join(buffer)
++        else:
++            data = ''.join(buffer)
++            data = data.encode(self.encoding)
++            return data
+ 
+ 
+ # --- filesystem
+@@ -2007,6 +2015,10 @@
+     use_sendfile = sendfile is not None
+     tcp_no_delay = hasattr(socket, "TCP_NODELAY")
+ 
++    #
++    use_encoding = True
++    encoding = "utf-8"
++
+     def __init__(self, conn, server):
+         """Initialize the command channel.
+ 
+@@ -2014,6 +2026,9 @@
+             established connection.
+          - (instance) server: the ftp server class instance.
+         """
++        asynchat.async_chat.__init__(self, conn)
++        self.set_terminator("\r\n")
++
+         # public session attributes
+         self.server = server
+         self.fs = None
+@@ -2080,6 +2095,7 @@
+             # #100) while EINVAL can occur on OSX (see issue #143).
+             self.connected = False
+             if err[0] in (errno.ENOTCONN, errno.EINVAL):
++#            if err.errno == errno.ENOTCONN:
+                 self.close()
+             else:
+                 self.handle_error()
+@@ -2177,6 +2193,23 @@
+             self._in_buffer = []
+             self._in_buffer_len = 0
+ 
++    def decode_received_line(self, line):
++        """Decode the received cmd + arg from bytes to a unicode string.
++        You might want to override this method to attempt to convert the
++        line by using different encodings in case UTF8 fails for some
++        reason (e.g. clients not following RFC-2640).
++
++        Example:
++
++        try:
++            return line.decode('utf8')
++        except UnicodeDecodeError:
++            return line.decode('latin1')
++        """
++        if not self.encoding:
++            return line
++        return line.decode(self.encoding)
++
+     def found_terminator(self):
+         r"""Called when the incoming data stream matches the \r\n
+         terminator.
+@@ -2187,6 +2220,13 @@
+         line = ''.join(self._in_buffer)
+         self._in_buffer = []
+         self._in_buffer_len = 0
++        try:
++            line = self.decode_received_line(line)
++        except UnicodeDecodeError:
++            self.respond("501 Can't decode the received command. This server "
++                         "is using %s encoding. Make sure your client does "
++                         "the same." %self.encoding)
++            return
+ 
+         cmd = line.split(' ')[0].upper()
+         arg = line[len(cmd)+1:]
+@@ -2317,8 +2357,8 @@
+         if hasattr(socket, 'MSG_OOB'):
+             try:
+                 data = self.socket.recv(1024, socket.MSG_OOB)
+-            except socket.error, why:
+-                if why[0] == errno.EINVAL:
++            except socket.error, err:
++                if err[0] == errno.EINVAL:
+                     return
+             else:
+                 self._in_buffer.append(data)
+@@ -2485,6 +2525,11 @@
+ 
+     # --- utility
+ 
++    def push(self, resp):
++        if self.encoding:
++            resp = resp.encode(self.encoding)
++        asynchat.async_chat.push(self, resp)
++
+     def respond(self, resp):
+         """Send a response to the client using the command channel."""
+         self._last_response = resp
+@@ -2609,7 +2654,7 @@
+         further commands.
+         """
+         if cmd in ("DELE", "RMD", "RNFR", "RNTO", "MKD"):
+-            line = '"%s" %s' % (' '.join([cmd, str(arg)]).strip(), respcode)
++            line = '"%s" %s' % (' '.join([cmd, arg]).strip(), respcode)
+             self.log(line)
+ 
+     def log_transfer(self, cmd, filename, receive, completed, elapsed, bytes):
+@@ -2873,7 +2918,7 @@
+             why = _strerror(err)
+             self.respond('550 %s.' % why)
+         else:
+-            producer = BufferedIteratorProducer(iterator)
++            producer = BufferedIteratorProducer(iterator, self.encoding )
+             self.push_dtp_data(producer, isproducer=True, cmd="LIST")
+ 
+     def ftp_NLST(self, path):
+@@ -2894,7 +2939,10 @@
+             if listing:
+                 listing.sort()
+                 data = '\r\n'.join(listing) + '\r\n'
+-            self.push_dtp_data(data, cmd="NLST")
++            if self.encoding:
++                data = data.encode(self.encoding)
++            self.log('OK NLST "%s". Transfer starting.' % path)
++            self.push_dtp_data(data)
+ 
+         # --- MLST and MLSD commands
+ 
+@@ -2943,7 +2991,7 @@
+             perms = self.authorizer.get_perms(self.username)
+             iterator = self.fs.format_mlsx(path, listing, perms,
+                        self._current_facts)
+-            producer = BufferedIteratorProducer(iterator)
++            producer = BufferedIteratorProducer(iterator, self.encoding)
+             self.push_dtp_data(producer, isproducer=True, cmd="MLSD")
+ 
+     def ftp_RETR(self, file):
+@@ -3489,7 +3537,8 @@
+                 self.respond('550 %s.' %why)
+             else:
+                 self.push('213-Status of "%s":\r\n' % line)
+-                self.push_with_producer(BufferedIteratorProducer(iterator))
++                self.push_with_producer(BufferedIteratorProducer(iterator,
++                                                                 self.encoding))
+                 self.respond('213 End of status.')
+ 
+     def ftp_FEAT(self, line):
+@@ -3497,6 +3546,8 @@
+         features = ['TVFS']
+         features += [feat for feat in ('EPRT', 'EPSV', 'MDTM', 'SIZE') \
+                      if feat in self.proto_cmds]
++        if self.encoding and self.encoding.lower() in ('utf8, utf-8'):
++            features.append('UTF8')
+         features.extend(self._extra_feats)
+         if 'MLST' in self.proto_cmds or 'MLSD' in self.proto_cmds:
+             facts = ''
+@@ -3779,7 +3830,7 @@
+             return
+         except socket.error, err:
+             # ECONNABORTED might be thrown on *BSD (see issue 105)
+-            if err[0] != errno.ECONNABORTED:
++            if err.errno != errno.ECONNABORTED:
+                 logerror(traceback.format_exc())
+             return
+         else:
