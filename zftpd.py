@@ -123,25 +123,35 @@ class MyDaemon(Daemon):
 
 if __name__ == '__main__':
     global currdir,currname
-    currdir='/home/ftpd/'
-    currname='zftpd'
-    daemon = MyDaemon('/dev/shm/'+currname+'.pid',currdir+currname+'.in',currdir+currname+'.out',currdir+currname+'.err')
-    print "ZFTP Server Init!"
     if len(sys.argv) == 2:
-        if 'start' == sys.argv[1]:
-            print "Starting...                                            [\033[1;32;40mOK\033[0m]"
-            daemon.start()
-        elif 'stop' == sys.argv[1]:
-            daemon.stop()
-            print "Stopping...                                            [\033[1;32;40mOK\033[0m]"
-        elif 'restart' == sys.argv[1]:
-            print "Stopping...                                            [\033[1;32;40mOK\033[0m]"
-            print "Starting...                                            [\033[1;32;40mOK\033[0m]"
-            daemon.restart()
-        else:
-            print "Unknown command"
-            sys.exit(2)
-        sys.exit(0)
+        currdir=os.getcwd()
+        currname='zftpd'
+        daemon = MyDaemon('/var/run/'+currname+'.pid',currdir+currname+'.in',currdir+currname+'.out',currdir+currname+'.err')
+    if len(sys.argv) == 3:
+        currdir=sys.argv[2]
+        currname='zftpd'
+        daemon = MyDaemon('/var/run/'+currname+'.pid',currdir+currname+'.in',currdir+currname+'.out',currdir+currname+'.err')
     else:
-        print "usage: %s start|stop|restart" % sys.argv[0]
+        print "Unknown command"
+        print "usage: %s start|stop|restart [path2server]" % sys.argv[0]
+        print "If you use sysv script to start this server, must specified path2server."
         sys.exit(2)
+    if 'start' == sys.argv[1]:
+        print "Starting...                                            [\033[1;32;40mOK\033[0m]"
+        daemon.start()
+    elif 'stop' == sys.argv[1]:
+        daemon.stop()
+        print "Stopping...                                            [\033[1;32;40mOK\033[0m]"
+    elif 'restart' == sys.argv[1]:
+        print "Stopping...                                            [\033[1;32;40mOK\033[0m]"
+        print "Starting...                                            [\033[1;32;40mOK\033[0m]"
+        daemon.restart()
+    else:
+        print "Unknown command"
+        print "usage: %s start|stop|restart" % sys.argv[0]
+        print "If you use sysv script to start this server, must specified path2server."
+        sys.exit(2)
+
+        
+    sys.exit(0)
+
